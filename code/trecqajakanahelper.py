@@ -80,7 +80,7 @@ def load_data(fname):
       qid2num_answers[qid] += 1
     prev = line
   # print sorted(qid2num_answers.items(), key=lambda x: float(x[0]))
-  print 'num_skipped', num_skipped
+  # print 'num_skipped', num_skipped
   return idx_ques, questions, idx_ans, answers, labels
 
 def buildQAPairs(idx_ques, questions, idx_ans, answers, labels):

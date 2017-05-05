@@ -8,6 +8,7 @@ import matplotlib
 matplotlib.use('Agg')
 import pylab as plt
 import sys
+import pickle
 import logging
 from json_utils import JSONConnector
 from utils import ObjectFactory
@@ -82,8 +83,10 @@ def run_experiment(jsparams, w2v_util, run_id, cfile, html_model_params):
     p_model = models.PassRtvModelFactory.load_model(params['model'],params['model'],model_params)
     logger.info("Trainning the model")
     history = p_model.train(ds, qa_pair)
+    #Save history object in pickel
+    save_history(params, history, run_id)
     logger.info("Testing the model")
-    predictions = p_model.test(ds, ds.questions['test'])
+    predictions = p_model.test(ds, qa_pair['test'])
     trec_eval_path = params['trec_eval_path']
     rank_file = params['out_folder']+params['expriment_id'].replace('$runid',str(run_id))+".rank"
     ground_truth_file = params['ground_truth_file']
@@ -118,6 +121,12 @@ def gen_html_report(params, history, workfolder):
     t = Template(template)
     return t.render(model=params['model'],runid=params['run_id'],date=params['date'],mmap=params['map'],mmrr=params['mrr'], learn_acc_plot=gen_acc_plot(history, workfolder),learn_loss_plot=gen_error_plot(history, workfolder),model_vars=params['model_vars'], cfile=params['cfile'], modeldes=params['modeldes'])
 
+def save_history(params, history, run_id):
+    logger = logging.getLogger()
+    out_file = params['working_folder']+params['expriment_id'].replace('$runid',run_id)+"_history.pkl"
+    with open(out_file, 'wb') as output:
+        pickle.dump(history.history, output, pickle.HIGHEST_PROTOCOL)
+    logger.info("History saved at: " + out_file )
 
 def gen_acc_plot(history, workfolder):
     # Print learning history

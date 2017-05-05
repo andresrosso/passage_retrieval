@@ -10,6 +10,9 @@ class QAPair():
         self.a = a
         self.l = l
 
+    def __repr__(self):
+        return 'qi('+str(self.qi)+') '+'ai('+str(self.ai)+')'+' '+str(self.l)
+
 class QADataSet(object):
 
     def __init__(self, name):

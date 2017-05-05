@@ -1,0 +1,148 @@
+from passrtv_models import PassageRetrievalModel
+from IPython.display import SVG
+from keras.utils.visualize_util import model_to_dot
+from keras.layers import Convolution1D, Convolution2D
+from keras.layers import Input, Embedding, merge, Flatten, SimpleRNN
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras.models import Model
+from keras.models import Sequential
+from keras.layers import GlobalMaxPooling2D, Activation, Input, Dense, merge, Dropout, LSTM
+from keras.models import Model
+from keras.models import Sequential
+from keras.layers import Convolution1D, Convolution2D, GlobalMaxPooling2D, Activation, Input, Dense, merge, Dropout
+from keras.layers import Flatten, SimpleRNN
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+import sys
+import nlp_utils
+import numpy as np
+import threading
+import models as models
+from models import threadsafe_generator
+from scipy import spatial
+import nltk
+
+"""
+Convolutional NN with 2d input tensor cosine sim input matrix and salience matrix
+"""
+class KerasConvNetModel_3(models.PassageRetrievalModel):
+
+    def __init__(self,init_params):
+        super(KerasConvNetModel_3, self).__init__('KerasConvNetModel_3', init_params['runid'])
+        self.w2vutil = init_params['w2v']
+        self.w2v = self.w2vutil.getWord2VectModel()
+        self.params = init_params['params']
+        self.max_words = self.params['method_params']['max_words']
+        self.positive_rate = self.params['method_params']['positive_rate']
+        self.prep_step = [ str(step) for step in init_params['params']['preprocess_steps'] ]
+
+    def getSalienceScore(self, qv, av, maxterms=40):
+        score = 0
+        #print qv, av
+        imp_postag = set(['WRB','VB', 'VBD', 'VBG', 'VBN', 'VBP','VBZ', 'WDT', 'WP', 'WRB', 'NN', 'NNS', 'NNP', 'NNPS', 'MD'])
+        pw1 = nltk.pos_tag(qv)
+        pw2 = nltk.pos_tag(av)
+        w1_m = np.zeros((maxterms,maxterms))
+        w2_m = np.zeros((maxterms,maxterms))
+        pw1_l = [len(set([w1[1]]).intersection(imp_postag)) for w1 in pw1]
+        w1_m[:,0:len(pw1_l)]=pw1_l
+        pw2_l = [len(set([w2[1]]).intersection(imp_postag)) for w2 in pw2]
+        w2_m[:,0:len(pw2_l)]=pw2_l
+        out_m = (w1_m + w2_m.T)/2
+        #print pw1_l, pw2_l, pw1
+        return out_m[0:maxterms,0:maxterms]
+
+    def buildCosineSimMatrix(self, questions_answer_pairs, max_terms=20):
+        #Construct Question Answer Matrix Pairs
+        x = []
+        y = []
+        for pair in questions_answer_pairs:
+            q_list = nlp_utils.data_preprocess(pair.q,self.prep_step)
+            a_list = []
+            q_vect = self.w2vutil.transform2Word2Vect(q_list)
+            cos_matrix = []
+            sal_matrix = []
+            for i, q_i in enumerate(q_vect):
+                if i==max_terms:
+                    break
+                sim_qi_a = []
+                a_list = nlp_utils.data_preprocess(pair.a,self.prep_step)
+                a_vect = self.w2vutil.transform2Word2Vect(a_list)
+                for k, a_k in enumerate(a_vect):
+                    if k==max_terms:
+                        break
+                    sim_qi_a += [spatial.distance.cosine(q_i, a_k)]
+                cos_matrix += [sim_qi_a]
+            sal_matrix = self.getSalienceScore(q_list,a_list,max_terms)
+            cos_matrix = np.array(cos_matrix)
+            #sal_matrix = np.array(sal_matrix)
+            shape_cos_matrix = cos_matrix.shape
+            #print 'shapes: ', sal_matrix.shape, cos_matrix.shape
+            cos_matrix = np.pad(cos_matrix, ((0,max_terms-shape_cos_matrix[0]),(0,max_terms-shape_cos_matrix[1])), mode='constant')
+            #sal_matrix = np.pad(sal_matrix, ((0,max_terms-shape_cos_matrix[0]),(0,max_terms-shape_cos_matrix[1])), mode='constant')
+            if np.isnan(cos_matrix).any():
+                print 'ERROR IS NAN: ',pair
+            x.append( np.stack( (cos_matrix, sal_matrix), axis=0) )
+            y.append( pair.l )
+        return np.array(x), np.array(y)
+
+    def load_model(self):
+        self.model = Sequential()
+        mp = self.params['method_params']
+        self.model.add(Convolution2D(
+            nb_filter=mp['convolution_2d']['nb_filter'],
+            nb_row=mp['convolution_2d']['nb_row'],
+            nb_col=mp['convolution_2d']['nb_col'],
+            subsample=(mp['convolution_2d']['subsample'], mp['convolution_2d']['subsample']),
+            border_mode=mp['convolution_2d']['border_mode'],
+            activation=mp['convolution_2d']['activation'],
+            input_shape=(2, self.max_words, self.max_words)))
+        self.model.add(Activation(mp['activation_2nd_Layer']))
+        self.model.add(GlobalMaxPooling2D())
+        self.model.add(Dense(mp['dense_4th_Layer']))
+        self.model.add(Dropout(mp['dropout']))
+        self.model.add(Dense(mp['dense_6th_layer']))
+        self.model.add(Activation(mp['end_layer_activation']))
+        return self.model
+
+    @threadsafe_generator
+    def generateXYBatches(self, ds, dataset, num_samples, positive_rate=0.5):
+        samples = ds.get_random_samples(dataset, num_samples, self.positive_rate)
+        while 1:
+            x, y = self.buildCosineSimMatrix(samples,max_terms=self.max_words)
+            print 'x_shape: ', x.shape
+            yield ( x, y )
+
+    def train(self, ds, qa_pair):
+        self.model = self.load_model()
+        # checkpoints
+        self.best_params=self.params['working_folder']+self.params['expriment_id'].replace('$runid',self.runid)+"_best.hdf5"
+        #output the model weights each time an improvement is observed during training
+        checkpoint = ModelCheckpoint(self.best_params, monitor=self.params['method_params']['monitor'], verbose=self.params['method_params']['verbose'], save_best_only=True, mode='auto')
+        #stops if the model is not learning at any point
+        earlyStopping=EarlyStopping(monitor=self.params['method_params']['monitor'], patience=self.params['method_params']['patience'], verbose=self.params['method_params']['verbose'], mode='auto')
+        epochs_number = self.params['method_params']['epochs']
+        batch_size = self.params['method_params']['batch_size']
+        validation_size = self.params['method_params']['validation_size']
+
+        self.model.compile(loss='mean_squared_error',
+                      optimizer='adam',
+                      metrics=['accuracy'])
+
+        history = self.model.fit_generator(
+                    self.generateXYBatches(ds, qa_pair['train'], batch_size, positive_rate=self.positive_rate),
+                    samples_per_epoch=batch_size,
+                    validation_data=self.generateXYBatches(ds, qa_pair['validate'], validation_size, positive_rate=self.positive_rate),
+                    nb_val_samples=validation_size,
+                    nb_epoch=epochs_number,
+                    callbacks=[checkpoint, earlyStopping])
+
+        return history
+
+
+    def test(self, ds, qa_pairs):
+        #reload best weights
+        self.model.load_weights(self.best_params)
+        #Construct Test dataset
+        test_qxa, test_l = self.buildCosineSimMatrix(qa_pairs, max_terms=self.max_words)
+        predictions = self.model.predict(np.array(test_qxa))
+        return predictions
