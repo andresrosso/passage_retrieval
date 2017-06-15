@@ -3,20 +3,20 @@ import numpy as np
 import threading
 
 class PassageRetrievalModel(object):
-    
+
     def __init__(self, name, runid):
         self.name = name
         self.runid = runid
 
     def train(self, ds, datasetv):
-        raise NotImplementedError("Subclass must implement abstract method") 
-        
+        raise NotImplementedError("Subclass must implement abstract method")
+
     def load_model(self):
-        raise NotImplementedError("Subclass must implement abstract method") 
+        raise NotImplementedError("Subclass must implement abstract method")
 
     def test(self, ds, dataset):
         raise NotImplementedError("Subclass must implement abstract method")
-    
+
     def gen_trec_eval_file(self,predictions, rank_file, qa_pairs):
         idx_pred = 0
         with open(rank_file, 'wb') as text_file:
@@ -25,13 +25,13 @@ class PassageRetrievalModel(object):
                 str_out = str(qa.qi) + ' 0 ' + str(qa.ai) + ' 0 ' + str(label) + ' 0\n'
                 idx_pred += 1
                 text_file.write(str_out)
-        
 
-class PassRtvModelFactory():    
+
+class PassRtvModelFactory():
     @staticmethod
     def load_model2(targetclass, params):
         return globals()[targetclass](params)
-        
+
     @staticmethod
     def load_model(module_name, class_name, params):
         """Constructor"""
@@ -40,7 +40,7 @@ class PassRtvModelFactory():
         instance = my_class(params)
         return instance
 
-    
+
 class threadsafe_iter:
     """Takes an iterator/generator and makes it thread-safe by
     serializing call to the `next` method of given iterator/generator.
@@ -58,11 +58,10 @@ class threadsafe_iter:
 
 
 
-    
+
 def threadsafe_generator(f):
     """A decorator that takes a generator function and makes it thread-safe.
     """
     def g(*a, **kw):
         return threadsafe_iter(f(*a, **kw))
     return g
-

@@ -7,6 +7,9 @@ import nltk
 from scipy import spatial
 import numpy as np
 import sys
+from itertools import groupby
+import random
+import logging
 
 class Word2vectUtils:
     def __init__(self, w2v_path):
@@ -101,6 +104,15 @@ def word2vect_sum_representation(list1, list2, w2v_model):
             logger.debug("Word not in word2vect vocabulary "+aq)
     return list1, list2
 
+"""
+The average precision is precision averaged across all values of recall between 0 and 1
+AvgP = (Sum(p(K)*r(k)))/(#relDocs) , where r(k) is an indicator
+Precision = RelRetrieved/Retrieved
+https://webcache.googleusercontent.com/search?q=cache:Y9HcueyIxXgJ:https://sanchom.wordpress.com/tag/average-precision/+&cd=5&hl=es&ct=clnk&gl=co
+https://en.wikipedia.org/wiki/Information_retrieval
+http://edu.hioa.no/pbib9200/evaluation/about%20trec_eval.pdf
+https://ccc.inaoep.mx/~villasen/bib/AN%20OVERVIEW%20OF%20EVALUATION%20METHODS%20IN%20TREC%20AD%20HOC%20IR%20AND%20TREC%20QA.pdf
+"""
 def avg_precision(y_true, y_pred):
     zipped = zip(y_true, y_pred)
     zipped.sort(key=lambda x:x[1],reverse=True)
@@ -115,3 +127,22 @@ def avg_precision(y_true, y_pred):
         return 0
     score/=(r)
     return score
+
+
+"""
+https://en.wikipedia.org/wiki/Mean_reciprocal_rank
+"""
+def reciprocal_rank(y_true, y_pred):
+    zipped = zip(y_true, y_pred)
+    zipped.sort(key=lambda x:x[1],reverse=True)
+    count_r = 1.0
+    rr_score = 0.0
+    for y_t,y_p in zipped:
+        if(y_t!=1):
+            count_r += 1
+        else:
+            rr_score = 1.0/count_r
+            break
+    if count_r-1==len(y_true):
+        rr_score = 0.0
+    return rr_score

@@ -4,6 +4,7 @@ import numpy as np
 import cPickle
 import subprocess
 from QAData import QAPair
+import io
 
 from collections import defaultdict
 
@@ -33,7 +34,7 @@ datasets = {'train': DATA_PATH+'train-less-than-40.manual-edit.xml',
              }
 
 def load_data(fname):
-  lines = open(fname).readlines()
+  lines = io.open(fname,'rU', encoding='utf-8').readlines()
   qids, idx_ques, questions, idx_ans, answers, labels = [], [], [], [], [], []
   num_skipped = 0
   prev = ''
@@ -42,6 +43,7 @@ def load_data(fname):
   k_q, k_a = -1, 0
   startq_answers = False
 
+  count = 0
   for i, line in enumerate(lines):
     line = line.strip()
 
@@ -67,6 +69,7 @@ def load_data(fname):
       answer = line.lower().split('\t')
       if len(answer) > 60:
         num_skipped += 1
+        print 'trec jakana skipping: ', qid
         continue
       labels.append(label)
       answers.append(answer)

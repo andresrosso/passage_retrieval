@@ -41,14 +41,16 @@ from scipy import spatial
 import nltk
 import random
 from random import shuffle
+from nltk.corpus import wordnet
+from nltk import edit_distance
 
 """
 Convolutional NN with 1d input tensor cosine sim input matrix element wise multiplied by salience matrix
 """
-class KerasConvNetModel_8(models.PassageRetrievalModel):
+class KerasConvNetModel_9(models.PassageRetrievalModel):
 
     def __init__(self,init_params):
-        super(KerasConvNetModel_8, self).__init__('KerasConvNetModel_8', init_params['runid'])
+        super(KerasConvNetModel_9, self).__init__('KerasConvNetModel_9', init_params['runid'])
         self.w2vutil = init_params['w2v']
         self.w2v = self.w2vutil.getWord2VectModel()
         self.params = init_params['params']
@@ -80,6 +82,53 @@ class KerasConvNetModel_8(models.PassageRetrievalModel):
             out_m = (wq_m.T + wa_m)/4
             return out_m[0:maxterms,0:maxterms]
 
+    def wordnet_similarity(self, word1, word2):
+        sim = None
+        syn_w1 = wordnet.synsets(word1)
+        syn_w2 = wordnet.synsets(word2)
+        if len(syn_w1) > 0 and len(syn_w2) > 0:
+            #shortest_path_distance
+            sim = max(syn_w1[0].wup_similarity(syn_w2[0]), syn_w2[0].wup_similarity(syn_w1[0]))
+        return sim
+
+    def levenshtein_similarity_normalized(word1, word2):
+        return 1.0 - edit_distance(word1, word2)/max(len(word1)+0.001, len(word2)+0.001)
+
+    def composed_similarity(self, w2v, q_list, a_list, wg_wordnet=1, wg_levenshtein=1, maxterms=40):
+        sim_matrix = np.zeros((maxterms,maxterms))
+        for i, q_i in enumerate(q_list[0:maxterms]):
+            q_vect = None
+            if q_i in w2v:
+                q_vect = w2v[q_i]
+            for j, a_j in enumerate(a_list[0:maxterms]):
+                pair_sim = 0
+                #Check if the words are the same
+                if q_i == a_j:
+                    pair_sim = 1
+                else:
+                    a_vect = None
+                    #print 'pair: ', q_i, ' - ', a_j
+                    #Calculate cosine similarity
+                    if a_j in w2v and q_vect is not None:
+                        a_vect = w2v[a_j]
+                        pair_sim = 0.5 + (np.dot(q_vect, a_vect) / (2.0 * np.linalg.norm(q_vect) * np.linalg.norm(a_vect)))
+                        #print 'pair: ', q_i, ' - ', a_j, ' -> w2v: ', pair_sim
+                    #If there are no word2vect represtation, use wordset
+                    else:
+                        #Check wordnet similarity
+                        pair_sim = self.wordnet_similarity(q_i, a_j)
+                        if pair_sim is not None:
+                            pair_sim = wg_wordnet * pair_sim
+                            #print 'pair: ', q_i, ' - ', a_j, ' --> wordnet: ', pair_sim
+                        #If there is no wordnet representation use
+                        else:
+                            pair_sim = wg_levenshtein * self.levenshtein_similarity_normalized(q_i, a_j)
+                            #print 'pair: ', q_i, ' - ', a_j, ' --> levenshtein: ', pair_sim
+                #Set similarity value
+                sim_matrix[i,j] = pair_sim
+                #print pair_sim
+        return sim_matrix
+
     def buildCosineSimMatrix(self, questions_answer_pairs, ordered_matrix=1, salience_weight=0, max_terms=40):
         #Construct Question Answer Matrix Pairs
         x = []
@@ -87,29 +136,12 @@ class KerasConvNetModel_8(models.PassageRetrievalModel):
         for pair in questions_answer_pairs:
             #Question Processin
             q_list = nlp_utils.data_preprocess(pair.q,self.prep_step)
-            q_vect = self.w2vutil.transform2Word2Vect(q_list)
             #Answer processing
             a_list = nlp_utils.data_preprocess(pair.a,self.prep_step)
-            a_vect = self.w2vutil.transform2Word2Vect(a_list)
-            #Get cosine distance
-            #distance = np.absolute( spatial.distance.cdist(q_vect[0:max_terms], a_vect[0:max_terms], 'cosine') )
-            ''' with that param the MAP and Loss are  highly correlated
-                and the improvement in MAP is very fast, but in test the results are almost equal
-                cos_matrix = 1 - (1/(1+np.exp(-distance*3)))
-                it changes a bit with
-                cos_matrix = 1 - (1/(1+np.exp(-distance*2)))
-
-            distance = spatial.distance.cdist(q_vect[0:max_terms], a_vect[0:max_terms],
-              lambda u, v: (np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v)))
-                    if (np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))) >= 0
-                    else -1.0*(np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))) )
-                    '''
-            if len(q_vect) < 1 or len(a_vect) < 1:
-                cos_matrix = np.zeros( (max_terms,max_terms) )
-            else:
-                distance = spatial.distance.cdist(q_vect[0:max_terms], a_vect[0:max_terms], 'cosine')
-                #cos_matrix = 1 - distance
-                cos_matrix = 1 - distance/2
+            #Get composed similarity matrix
+            cos_matrix = self.composed_similarity(self.w2vutil.w2v_model, q_list, a_list, \
+                    wg_wordnet=1, wg_levenshtein=1, maxterms=max_terms)
+            #Reshape
             shape_cos_matrix = cos_matrix.shape
             cos_matrix = np.pad(cos_matrix, ((0,max_terms-shape_cos_matrix[0]),(0,max_terms-shape_cos_matrix[1])), mode='constant')
             if np.isnan(cos_matrix).any():
